@@ -211,17 +211,23 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
     onUpdate: (result: SummaryProcessResponse) => void | Promise<void>
   ) => {
     stopSummaryPolling(meetingId);
+
     let pollCount = 0;
-    const maxPolls = 200;
+    const pollingStartedAt = Date.now();
+    const maxDurationMs = 45 * 60 * 1000; // 45 minutes
+
     const poll = async () => {
       const entry = summaryPollsRef.current.get(meetingId);
       if (!entry || entry.processId !== processId || entry.inFlight) {
         return;
       }
+
       entry.inFlight = true;
+
       try {
         pollCount += 1;
-        if (pollCount >= maxPolls) {
+
+        if (Date.now() - pollingStartedAt >= maxDurationMs) {
           await onUpdate({
             status: 'error',
             meetingName: null,
@@ -229,8 +235,9 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
             start: processId,
             end: null,
             data: null,
-            error: 'Summary generation timed out after 15 minutes. Please try again or check your model configuration.',
+            error: 'Summary generation timed out after 45 minutes. Please try again or check your model configuration.',
           });
+
           if (summaryPollsRef.current.get(meetingId) === entry) {
             stopSummaryPolling(meetingId, processId);
           }
@@ -239,11 +246,15 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 
         const result = await invoke<SummaryProcessResponse>('api_get_summary', { meetingId });
         const current = summaryPollsRef.current.get(meetingId);
+
         if (current !== entry || result.start !== processId) {
           return;
         }
+
         await onUpdate(result);
+
         if (summaryPollsRef.current.get(meetingId) !== entry) return;
+
         if (
           result.status === 'completed'
           || result.status === 'error'
@@ -258,6 +269,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
         if (current !== entry) {
           return;
         }
+
         try {
           await onUpdate({
             status: 'error',
@@ -286,7 +298,6 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
     const timer = setInterval(() => void poll(), 5000);
     summaryPollsRef.current.set(meetingId, { processId, timer, inFlight: false });
   }, [stopSummaryPolling]);
-
   useEffect(() => () => {
     summaryPollsRef.current.forEach(({ timer }) => clearInterval(timer));
     summaryPollsRef.current.clear();
